@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use anyhow::Result;
-use yfinance_rs::{Interval, Range, Ticker, YfClient};
+use yfinance_rs::{Ticker, YfClient};
 use yfinance_rs::core::conversions::money_to_f64;
 
 #[derive(Debug, Deserialize)]
