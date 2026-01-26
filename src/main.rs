@@ -1,81 +1,32 @@
-use serde::Deserialize;
-use anyhow::Result;
-use yfinance_rs::{Ticker, YfClient};
-use yfinance_rs::core::conversions::money_to_f64;
-
-#[derive(Debug, Deserialize)]
-struct StockQuote {
-    symbol: String,
-    price: f64,
-    price_target: f64,
-    recs_summary: String,
-}
-
-async fn fetch_quote(symbol: &str) -> Result<StockQuote> {
-    let client = YfClient::default();
-    let ticker = Ticker::new(&client, symbol);
-
-    let (info_rs, target_rs, sum_rs) = tokio::join!(
-        ticker.quote(),
-        ticker.analyst_price_target(None),
-        ticker.recommendations_summary()
-    );
-
-    let info = info_rs?;
-    let target_info = target_rs?;
-    let sum_info = sum_rs?;
-
-    let quote = StockQuote{
-        symbol: symbol.to_string(),
-        price: info.price.as_ref().map(money_to_f64).unwrap_or(0.0),
-        price_target: target_info.mean.as_ref().map(money_to_f64).unwrap_or(0.0),
-        recs_summary: sum_info
-            .mean_rating_text
-            .as_deref()
-            .unwrap_or("N/A").to_string(),
-    };
-    Ok(quote)
-}
+use futures_util::StreamExt;
+use tokio_tungstenite::connect_async;
+use url::Url;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let company_list = vec!["AAPL", "TSLA", "AMZN", "NVDA"];
+async fn main() {
+    // 1. 바이낸스 실시간 스트림 주소 (BTC/USDT 거래 데이터)
+    let url = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade";
+    let url = Url::parse(url).unwrap();
 
-    let mut handles = vec![];
-    for company in company_list {
-        let handle = tokio::spawn(async move {
-            fetch_quote(&company).await
-        });
-        handles.push(handle);
-    }
+    println!("바이낸스 서버에 연결 중: {}", url);
 
-    let mut results = vec![];
+    // 2. WebSocket 연결
+    let (ws_stream, _) = connect_async(url).await.expect("연결 실패!");
+    println!("연결 성공! 실시간 데이터를 수집합니다...");
 
-    for handle in handles {
-        match handle.await? {
-            Ok(quote) => results.push(quote),
-            Err(e) => println!("Error collecting data: {:?}", e),
+    let (_, mut read) = ws_stream.split();
+
+    // 3. 쏟아지는 데이터 읽기 (비동기 스트림)
+    while let Some(message) = read.next().await {
+        match message {
+            Ok(msg) => {
+                if msg.is_text() {
+                    // JSON 데이터를 파싱하기 전, 원본 텍스트를 출력해 봅니다.
+                    // 초당 몇 번이나 데이터가 올라오는지 확인해 보세요!
+                    println!("수신 데이터: {}", msg.to_text().unwrap());
+                }
+            }
+            Err(e) => eprintln!("에러 발생: {}", e),
         }
     }
-
-    results.sort_by(|a, b| {
-        let a_upside = (a.price_target / a.price) - 1.0;
-        let b_upside = (b.price_target / b.price) - 1.0;
-        b_upside.partial_cmp(&a_upside).unwrap()
-    });
-
-    println!("🚀Starting stock analysis report!");
-    for (i, q) in results.iter().enumerate() {
-        let upside = (q.price_target / q.price - 1.0) * 100.0;
-        println!(
-            "{}. {} (현재: ${:.2} / 목표: ${:.2}) -> 기대수익률: {:.1}%",
-            i + 1, q.symbol, q.price, q.price_target, upside
-        )
-    }
-
-    if let Some(best) = results.first() {
-        println!("🥳최고의 추식은 {} 입니다!", best.symbol)
-    }
-
-    Ok(())
 }
