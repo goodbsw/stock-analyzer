@@ -1,32 +1,45 @@
-use futures_util::StreamExt;
-use tokio_tungstenite::connect_async;
-use url::Url;
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use serde_json::json;
+use serde::Deserialize;
+use tokio::sync::mpsc;
+
+#[derive(Debug, Deserialize)]
+struct UpbitTicker {
+    code: String,
+    trade_price: f64,      // 현재가
+    high_price: f64,       // 고가
+    low_price: f64,        // 저가
+    acc_trade_volume_24h: f64, // 24시간 거래량
+}
 
 #[tokio::main]
 async fn main() {
-    // 1. 바이낸스 실시간 스트림 주소 (BTC/USDT 거래 데이터)
-    let url = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade";
-    let url = Url::parse(url).unwrap();
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1000);
+    // 업비트 웹소켓 주소
+    let url = "wss://api.upbit.com/websocket/v1";
+    let (ws_stream, _) = connect_async(url).await.expect("연결 실패");
+    let (mut write, mut read) = ws_stream.split();
 
-    println!("바이낸스 서버에 연결 중: {}", url);
+    // 업비트 구독 형식 (바이낸스와 약간 다릅니다)
+    let subscribe_msg = json!([
+        {"ticket":"test"},
+        {"type":"ticker","codes":["KRW-BTC"]} // 비트코인 시세 구독
+    ]).to_string();
 
-    // 2. WebSocket 연결
-    let (ws_stream, _) = connect_async(url).await.expect("연결 실패!");
-    println!("연결 성공! 실시간 데이터를 수집합니다...");
+    write.send(Message::Text(subscribe_msg)).await.expect("구독 실패");
 
-    let (_, mut read) = ws_stream.split();
+    tokio::spawn(async move {
+       while let Some(bin) = rx.recv().await {
+           if let Ok(ticker) = serde_json::from_slice::<UpbitTicker>(&bin) {
+               println!("✅ Trade Price: {}, high price {} | row price {}", ticker.trade_price, ticker.high_price, ticker.low_price);
+           }
+       }
+    });
 
-    // 3. 쏟아지는 데이터 읽기 (비동기 스트림)
     while let Some(message) = read.next().await {
-        match message {
-            Ok(msg) => {
-                if msg.is_text() {
-                    // JSON 데이터를 파싱하기 전, 원본 텍스트를 출력해 봅니다.
-                    // 초당 몇 번이나 데이터가 올라오는지 확인해 보세요!
-                    println!("수신 데이터: {}", msg.to_text().unwrap());
-                }
-            }
-            Err(e) => eprintln!("에러 발생: {}", e),
+        if let Ok(Message::Binary(bin)) = message {
+            let _ = tx.send(bin).await;
         }
     }
 }
