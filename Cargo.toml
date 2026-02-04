@@ -16,3 +16,5 @@ anyhow = "1.0"
 # WebSocket 연결을 위한 라이브러리
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 futures-util = "0.3" # 스트림 데이터를 다루기 위한 유틸리티
+axum = { version = "0.7", features = ["ws"] } # 웹 프레임워크 및 웹소켓 지원
+tower-http = { version = "0.5", features = ["fs", "cors"] } # 정적 파일 및 CORS 설정

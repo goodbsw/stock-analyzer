@@ -1,45 +1,45 @@
-use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use serde_json::json;
-use serde::Deserialize;
-use tokio::sync::mpsc;
+mod model;
+mod collector;
 
-#[derive(Debug, Deserialize)]
-struct UpbitTicker {
-    code: String,
-    trade_price: f64,      // 현재가
-    high_price: f64,       // 고가
-    low_price: f64,        // 저가
-    acc_trade_volume_24h: f64, // 24시간 거래량
-}
+use std::sync::{Arc, RwLock};
+use tokio::sync::{mpsc, broadcast};
+use model::{AppState, PriceMessage};
 
 #[tokio::main]
 async fn main() {
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1000);
-    // 업비트 웹소켓 주소
-    let url = "wss://api.upbit.com/websocket/v1";
-    let (ws_stream, _) = connect_async(url).await.expect("연결 실패");
-    let (mut write, mut read) = ws_stream.split();
+    let (price_tx, mut price_rx) = mpsc::channel::<PriceMessage>(100);
+    let (b_tx, _) = broadcast::channel::<String>(16);
 
-    // 업비트 구독 형식 (바이낸스와 약간 다릅니다)
-    let subscribe_msg = json!([
-        {"ticket":"test"},
-        {"type":"ticker","codes":["KRW-BTC"]} // 비트코인 시세 구독
-    ]).to_string();
-
-    write.send(Message::Text(subscribe_msg)).await.expect("구독 실패");
-
-    tokio::spawn(async move {
-       while let Some(bin) = rx.recv().await {
-           if let Ok(ticker) = serde_json::from_slice::<UpbitTicker>(&bin) {
-               println!("✅ Trade Price: {}, high price {} | row price {}", ticker.trade_price, ticker.high_price, ticker.low_price);
-           }
-       }
+    let shared_state = Arc::new(AppState {
+        upbit_price: RwLock::new(0.0),
+        binance_price: RwLock::new(0.0),
+        kimchi_premium: RwLock::new(0.0),
+        tx: b_tx,
     });
 
-    while let Some(message) = read.next().await {
-        if let Ok(Message::Binary(bin)) = message {
-            let _ = tx.send(bin).await;
+    // 업비트 수집기 실행 (모듈 호출)
+    let tx_upbit = price_tx.clone();
+    tokio::spawn(async move {
+        collector::upbit::run(tx_upbit).await;
+    });
+
+    // 바이낸스 수집기도 이런 식으로 추가될 겁니다.
+    // tokio::spawn(async move { collector::binance::run(tx_binance).await; });
+
+    // Consumer & Server 로직...
+    let shared_state_for_ingestor = Arc::clone(&shared_state);
+    tokio::spawn(async move {
+        while let Some(message) = price_rx.recv().await {
+            match message {
+                PriceMessage::Upbit(price) => {
+                    let mut upbit_p = shared_state_for_ingestor.upbit_price.write().unwrap();
+                    *upbit_p = price;
+                }
+                PriceMessage::Binance(price) => {
+                    let mut binance_p = shared_state_for_ingestor.binance_price.write().unwrap();
+                    *binance_p = price;
+                }
+            }
         }
-    }
+    });
 }
