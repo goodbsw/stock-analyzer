@@ -24,7 +24,10 @@ async fn main() {
     });
 
     // 바이낸스 수집기도 이런 식으로 추가될 겁니다.
-    // tokio::spawn(async move { collector::binance::run(tx_binance).await; });
+    let tx_binance = price_tx.clone();
+    tokio::spawn(async move {
+        collector::binance::run(tx_binance).await;
+    });
 
     // Consumer & Server 로직...
     let shared_state_for_ingestor = Arc::clone(&shared_state);
@@ -34,12 +37,17 @@ async fn main() {
                 PriceMessage::Upbit(price) => {
                     let mut upbit_p = shared_state_for_ingestor.upbit_price.write().unwrap();
                     *upbit_p = price;
+                    println!("The latest price of Upbit is {}", *upbit_p)
                 }
                 PriceMessage::Binance(price) => {
                     let mut binance_p = shared_state_for_ingestor.binance_price.write().unwrap();
                     *binance_p = price;
+                    println!("The latest price of Binance is {}", *binance_p)
                 }
             }
         }
     });
+
+    // 영원히 끝나지 않는 대기
+    tokio::signal::ctrl_c().await.unwrap();
 }

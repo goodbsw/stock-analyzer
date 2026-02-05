@@ -6,7 +6,7 @@ use crate::model::{PriceMessage, UpbitTicker};
 
 pub async fn run(tx: mpsc::Sender<PriceMessage>) {
     let url = "wss://api.upbit.com/websocket/v1";
-    let (ws_stream, _) = connect_async(url).await.expect("업비트 연결 실패");
+    let (ws_stream, _) = connect_async(url).await.expect("UPBIT: Connection Failure");
     let (mut write, mut read) = ws_stream.split();
 
     let subscribe_msg = json!([
@@ -14,7 +14,7 @@ pub async fn run(tx: mpsc::Sender<PriceMessage>) {
         {"type":"ticker","codes":["KRW-BTC"]}
     ]).to_string();
 
-    let _ = write.send(Message::Text(subscribe_msg)).await.expect("UPBIT: Connection Failure");
+    let _ = write.send(Message::Text(subscribe_msg)).await.expect("UPBIT: Subscribe Failure");
 
     while let Some(Ok(Message::Binary(bin))) = read.next().await {
         if let Ok(ticker) = serde_json::from_slice::<UpbitTicker>(&bin) {
