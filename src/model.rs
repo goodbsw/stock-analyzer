@@ -1,11 +1,13 @@
 use std::sync::RwLock;
-use tokio::sync::broadcast;
+use tokio::sync::{mpsc, broadcast};
 use serde::Deserialize;
+use async_trait::async_trait;
 
 pub struct AppState {
     pub upbit_price: RwLock<f64>,
     pub binance_price: RwLock<f64>,
     pub kimchi_premium: RwLock<f64>,
+    pub rate: RwLock<f64>,
     pub tx: broadcast::Sender<String>,
 }
 
@@ -23,4 +25,10 @@ pub struct UpbitTicker {
 pub struct BinanceTicker {
     #[serde(rename = "c")]
     pub close_price: String,
+}
+
+#[async_trait]
+pub trait Exchange: Send + Sync {
+    fn name(&self) -> String;
+    async fn run(&self, tx: mpsc::Sender<PriceMessage>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
